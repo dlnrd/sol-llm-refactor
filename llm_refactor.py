@@ -1,68 +1,74 @@
-import argparse
 import os
-import glob
 import ollama
-
-# Define a predefined prompt
-PREDEFINED_PROMPT = "Analyze the following Solidity code and provide a summary of potential security issues and improvements."
+import time
 
 
-def process_sol_file(file_path):
-    # Read the .sol file content
-    with open(file_path, 'r') as f:
-        file_content = f.read()
+def refactorSolFile(input_file):
+    with open(input_file, "r") as file:
+        sol_code = file.read()
 
-    # Use the Ollama package to process the file with the predefined prompt
-    try:
-        response = ollama.chat(model='deepseek-r1', messages=[
-                               {"role": "user", "content": file_content}])
-        return response["text"]
-    except Exception as e:
-        print(f"Error processing file {file_path}: {e}")
-        return ""
+        response = ollama.chat(
+            model="gemma3",
+            messages=[
+                {"role": "user",
+                 "content": "The next prompt I will give you will only be \
+                 Solidity source code, rearrange the order of any state \
+                 variables or variables within structs to use the smallest \
+                 number of storage slots, do not change them in any other way.\
+                 Additionally, move any variables that are able to and would \
+                 benefit from memory to calldata. Make no other modifications \
+                 and if none of the previous instructions apply, respond with \
+                 'nothing'. Do not respond with markdown tags (e.g ```solidity \
+                 or ```)"},
 
-
-def save_output(output_dir, file_name, result):
-    # Make sure the output directory exists
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Save the result to a file in the output directory
-    output_file = os.path.join(output_dir, f"{file_name}_processed.txt")
-    with open(output_file, 'w') as f:
-        f.write(result)
-
-
-def process_files(input_dir, output_dir):
-    # Get all .sol files in the input directory
-    sol_files = glob.glob(os.path.join(input_dir, "*.sol"))
-
-    for sol_file in sol_files:
-        file_name = os.path.basename(sol_file)
-        print(f"Processing {file_name}...")
-
-        # Process the .sol file using Ollama
-        result = process_sol_file(sol_file)
-
-        # Save the result to the output directory
-        if result:
-            save_output(output_dir, file_name, result)
-            print(f"Saved processed result for {file_name}")
-
-
-def main():
-    # Set up the argument parser
-    parser = argparse.ArgumentParser(
-        description="Process .sol files using Ollama.")
-    parser.add_argument('-i', '--input', required=True,
-                        help="Directory containing .sol files")
-    parser.add_argument('-o', '--output', required=True,
-                        help="Directory to save processed results")
-
-    args = parser.parse_args()
-
-    # Process the files
-    process_files(args.input, args.output)
+                {"role": "user", "content": sol_code}
+            ])
+        return response.message.content.strip()
 
 
 if __name__ == "__main__":
-    main()
+    inputDir = "./input/"
+    outputDir = "./output/"
+
+    totalTime, filesProcessed, fileSizeIssue, noOpts, refactored = 0, 0, 0, 0, 0
+
+    # make output dir if doesn't exist
+    if not os.path.exists(outputDir):
+        os.makedirs(outputDir)
+
+    # refactor each .sol file in the input directory
+    for filename in os.listdir(inputDir):
+        if filename.endswith(".sol"):
+            inputFile = os.path.join(inputDir, filename)
+            outputFile = os.path.join(outputDir, filename)
+
+            if os.path.getsize(inputFile) > 3500:
+                print(f"{filename} is too big (over 3KB)")
+                fileSizeIssue += 1
+                continue
+
+            startTime = time.time()
+            refactoredCode = refactorSolFile(inputFile)
+            totalTime += time.time() - startTime
+            filesProcessed += 1
+            print(filesProcessed)
+
+            if refactoredCode == "nothing":
+                print(f"{filename} has no optimisations")
+                noOpts += 1
+                continue
+
+            # save refactored code to the output directory
+            if refactoredCode:
+                with open(outputFile, "w") as file:
+                    file.write(refactoredCode)
+                print(f"Refactored {filename} and saved to {outputFile}")
+                refactored += 1
+            else:
+                print(f"Failed to process {filename}")
+
+    print(f"Total time to refactor: {totalTime}")
+    print(f"Processed files: {filesProcessed}")
+    print(f"Too big files: {fileSizeIssue}")
+    print(f"Average time to refactor: {totalTime/filesProcessed}")
+    print(f"Refactored files: {refactored}")
